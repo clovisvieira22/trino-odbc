@@ -7,6 +7,8 @@ on:
   push:
     branches-ignore:
       - main
+    paths-ignore:
+      - .github/workflows/publish_test_release.yml
   workflow_dispatch:
 
 permissions:
