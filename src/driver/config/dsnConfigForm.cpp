@@ -33,7 +33,7 @@ constexpr int ID_BUTTON_TEST          = 118;
 constexpr int BUF_LEN                 = 1024;
 
 // Vertical position of the button row.
-constexpr int BUTTON_ROW_Y = 350;
+constexpr int BUTTON_ROW_Y = 205;
 
 
 std::string NOT_REQUIRED = "<Not Required>";
@@ -73,13 +73,9 @@ DSNForm::DSNForm(HWND parent, std::map<std::string, std::string> attributes) {
   }
 }
 
-// Read a text field, treating the "<Not Required>" placeholder as empty.
-static std::string readField(HWND item) {
-  std::string text = getEditText(item);
-  return text == NOT_REQUIRED ? "" : text;
-}
-
 // Copy every value currently shown in the form into a DriverConfig.
+// The form only offers user name + password, so the auth method is always
+// Basic Auth. The other auth methods remain usable from a connection string.
 static void readFormIntoConfig(HWND hwnd, DriverConfig* config) {
   char buf[BUF_LEN] = {0};
 
@@ -92,15 +88,7 @@ static void readFormIntoConfig(HWND hwnd, DriverConfig* config) {
   SendMessage(logLevelItem, CB_GETLBTEXT, logIndex, (LPARAM)buf);
   config->setLogLevel(std::string(buf));
 
-  HWND authMethodItem = GetDlgItem(hwnd, ID_COMBO_AUTHMETHOD);
-  LRESULT authIndex   = SendMessage(authMethodItem, CB_GETCURSEL, 0, 0);
-  SendMessage(authMethodItem, CB_GETLBTEXT, authIndex, (LPARAM)buf);
-  config->setAuthMethod(std::string(buf));
-
-  config->setOidcDiscoveryUrl(readField(GetDlgItem(hwnd, ID_EDIT_OIDC_DISC)));
-  config->setClientId(readField(GetDlgItem(hwnd, ID_EDIT_CLIENT_ID)));
-  config->setClientSecret(readField(GetDlgItem(hwnd, ID_EDIT_CLIENT_SECRET)));
-  config->setOidcScope(readField(GetDlgItem(hwnd, ID_EDIT_OIDC_SCOPE)));
+  config->setAuthMethod(AM_BASIC_AUTH);
   config->setUser(getEditText(GetDlgItem(hwnd, ID_EDIT_USER)));
   config->setPassword(getEditText(GetDlgItem(hwnd, ID_EDIT_PASSWORD)));
 }
@@ -183,25 +171,18 @@ LRESULT CALLBACK WINDOW_CB(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
   switch (uMsg) {
     case WM_COMMAND: {
       WriteLog(LL_TRACE, "  WM_COMMAND executing");
-      HWND dsnItem               = GetDlgItem(hwnd, ID_EDIT_DSN);
-      HWND hostnameItem          = GetDlgItem(hwnd, ID_EDIT_HOSTNAME);
-      HWND portItem              = GetDlgItem(hwnd, ID_EDIT_PORT);
-      HWND logLevelItem          = GetDlgItem(hwnd, ID_COMBO_LOGLEVEL);
-      HWND authMethodItem        = GetDlgItem(hwnd, ID_COMBO_AUTHMETHOD);
-      HWND oidcDiscoveryUrlItem  = GetDlgItem(hwnd, ID_EDIT_OIDC_DISC);
-      HWND oidcDiscoveryUrlLabel = GetDlgItem(hwnd, ID_STATIC_OIDC_DISC);
-      HWND clientIdItem          = GetDlgItem(hwnd, ID_EDIT_CLIENT_ID);
-      HWND clientIdLabel         = GetDlgItem(hwnd, ID_STATIC_CLIENT_ID);
-      HWND clientSecretItem      = GetDlgItem(hwnd, ID_EDIT_CLIENT_SECRET);
-      HWND clientSecretLabel     = GetDlgItem(hwnd, ID_STATIC_CLIENT_SECRET);
-      HWND oidcScopeItem         = GetDlgItem(hwnd, ID_EDIT_OIDC_SCOPE);
-      HWND oidcScopeLabel        = GetDlgItem(hwnd, ID_STATIC_OIDC_SCOPE);
-      char buf[BUF_LEN]          = {0};
       switch (LOWORD(wParam)) {
         case ID_BUTTON_SAVE: {
           WriteLog(LL_TRACE, "  ID_BUTTON_SAVE executing");
-          readFormIntoConfig(hwnd, driverConfigPtr);
-
+          try {
+            readFormIntoConfig(hwnd, driverConfigPtr);
+          } catch (std::exception& e) {
+            MessageBox(hwnd,
+                       (std::string("Invalid value: ") + e.what()).c_str(),
+                       "Trino ODBC",
+                       MB_OK | MB_ICONERROR);
+            break;
+          }
           driverConfigPtr->setIsSaved(true);
 
           DestroyWindow(hwnd);
@@ -220,51 +201,6 @@ LRESULT CALLBACK WINDOW_CB(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
           break;
         }
         default: {
-          WriteLog(LL_TRACE, "  WINDOW_CB default (redraw)");
-          LRESULT authIndex = SendMessage(authMethodItem, CB_GETCURSEL, 0, 0);
-          SendMessage(authMethodItem, CB_GETLBTEXT, authIndex, (LPARAM)buf);
-          std::string authMethod = stringFromChar(buf, CHAR_IS_NTS);
-          if (authMethod == "OIDC Client Cred Auth") {
-            WriteLog(LL_TRACE, "  Client Cred Auth");
-            // Show the OIDC Config fields
-            if (getEditText(oidcDiscoveryUrlItem) == NOT_REQUIRED) {
-              setEditText(oidcDiscoveryUrlItem, "");
-            }
-            setEditWriteable(oidcDiscoveryUrlItem);
-            if (getEditText(clientIdItem) == NOT_REQUIRED) {
-              setEditText(clientIdItem, "");
-            }
-            setEditWriteable(clientIdItem);
-            if (getEditText(clientSecretItem) == NOT_REQUIRED) {
-              setEditText(clientSecretItem, "");
-            }
-            setEditWriteable(clientSecretItem);
-            if (getEditText(oidcScopeItem) == NOT_REQUIRED) {
-              setEditText(oidcScopeItem, "");
-            }
-            setEditWriteable(oidcScopeItem);
-            InvalidateRect(hwnd, NULL, FALSE);
-          } else if (not authMethod.empty()) {
-            WriteLog(LL_TRACE, "  Other Auth");
-            // Hide the OIDC Config fields
-            if (getEditText(oidcDiscoveryUrlItem) == "") {
-              setEditText(oidcDiscoveryUrlItem, NOT_REQUIRED);
-            }
-            setEditReadOnly(oidcDiscoveryUrlItem);
-            if (getEditText(clientIdItem) == "") {
-              setEditText(clientIdItem, NOT_REQUIRED);
-            }
-            setEditReadOnly(clientIdItem);
-            if (getEditText(clientSecretItem) == "") {
-              setEditText(clientSecretItem, NOT_REQUIRED);
-            }
-            setEditReadOnly(clientSecretItem);
-            if (getEditText(oidcScopeItem) == "") {
-              setEditText(oidcScopeItem, NOT_REQUIRED);
-            }
-            setEditReadOnly(oidcScopeItem);
-            InvalidateRect(hwnd, NULL, FALSE);
-          }
           break;
         }
       }
@@ -305,38 +241,26 @@ void DSNForm::ShowDSNForm() {
                              CW_USEDEFAULT,
                              CW_USEDEFAULT,
                              625,
-                             440,
+                             300,
                              this->parent,
                              NULL,
                              GetModuleHandle(NULL),
                              &this->configResult);
   bool visible = true;
-  // FEATURE: actually hide the OIDC fields if the user doesn't select OIDC
-  // auth. For now, they're just disabled but still visible.
-  bool oidcVis = true;
 
   WriteLog(LL_TRACE, "  Creating Labels");
   labelMaker(form, 10, NULL, "DSN Name:", visible);
   labelMaker(form, 40, NULL, "Hostname:", visible);
   labelMaker(form, 70, NULL, "Port:", visible);
-  labelMaker(form, 100, NULL, "Log Level:", visible);
-  labelMaker(form, 130, NULL, "Auth Method:", visible);
-  labelMaker(form, 160, ID_STATIC_OIDC_DISC, "OIDC Discovery URL:", oidcVis);
-  labelMaker(form, 190, ID_STATIC_CLIENT_ID, "Client ID:", oidcVis);
-  labelMaker(form, 220, ID_STATIC_CLIENT_SECRET, "Client Secret:", oidcVis);
-  labelMaker(form, 250, ID_STATIC_OIDC_SCOPE, "OIDC Scope:", oidcVis);
-  labelMaker(form, 280, NULL, "User (UID):", visible);
-  labelMaker(form, 310, NULL, "Password:", visible);
+  labelMaker(form, 100, NULL, "User:", visible);
+  labelMaker(form, 130, NULL, "Password:", visible);
+  labelMaker(form, 160, NULL, "Log Level:", visible);
 
   WriteLog(LL_TRACE, "  Creating Text Entries");
-  HWND hwndDsn              = editMaker(form, 10, ID_EDIT_DSN, visible);
-  HWND hwndHostname         = editMaker(form, 40, ID_EDIT_HOSTNAME, visible);
-  HWND hwndPort             = editMaker(form, 70, ID_EDIT_PORT, visible);
-  HWND hwndOidcDiscoveryUrl = editMaker(form, 160, ID_EDIT_OIDC_DISC, oidcVis);
-  HWND hwndClientId         = editMaker(form, 190, ID_EDIT_CLIENT_ID, oidcVis);
-  HWND hwndClientSecret = editMaker(form, 220, ID_EDIT_CLIENT_SECRET, oidcVis);
-  HWND hwndOidcScope    = editMaker(form, 250, ID_EDIT_OIDC_SCOPE, oidcVis);
-  HWND hwndUser         = editMaker(form, 280, ID_EDIT_USER, visible);
+  HWND hwndDsn      = editMaker(form, 10, ID_EDIT_DSN, visible);
+  HWND hwndHostname = editMaker(form, 40, ID_EDIT_HOSTNAME, visible);
+  HWND hwndPort     = editMaker(form, 70, ID_EDIT_PORT, visible);
+  HWND hwndUser     = editMaker(form, 100, ID_EDIT_USER, visible);
   // The password box cannot use editMaker: ES_PASSWORD does not work together
   // with ES_MULTILINE.
   HWND hwndPassword = CreateWindow(
@@ -345,7 +269,7 @@ void DSNForm::ShowDSNForm() {
       WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP | ES_PASSWORD |
           ES_AUTOHSCROLL,
       165,
-      310,
+      130,
       425,
       20,
       form,
@@ -362,26 +286,26 @@ void DSNForm::ShowDSNForm() {
 
   WriteLog(LL_TRACE, "  Creating Log Level Combobox");
   HWND hwndLogLevel =
-      comboboxMaker(form, 100, ID_COMBO_LOGLEVEL, LOG_LEVEL_NAMES);
+      comboboxMaker(form, 160, ID_COMBO_LOGLEVEL, LOG_LEVEL_NAMES);
 
-  WriteLog(LL_TRACE, "  Creating Auth Method Combobox");
-  HWND hwndAuthMethod =
-      comboboxMaker(form, 130, ID_COMBO_AUTHMETHOD, AUTH_METHOD_NAMES);
+  // A new DSN gets an https hostname hint, since passwords require TLS.
+  std::string hostname = this->configResult.getHostname();
+  if (hostname.empty() or hostname == "localhost") {
+    hostname = "https://";
+  }
 
   WriteLog(LL_TRACE, "  Pre-populating the text fields");
   setEditText(hwndDsn, this->configResult.getDSN());
-  setEditText(hwndHostname, this->configResult.getHostname());
-  setEditText(hwndPort, this->configResult.getPortStr());
-  setEditText(hwndOidcDiscoveryUrl, this->configResult.getOidcDiscoveryUrl());
-  setEditText(hwndClientId, this->configResult.getClientId());
-  setEditText(hwndClientSecret, this->configResult.getClientSecret());
-  setEditText(hwndOidcScope, this->configResult.getOidcScope());
+  setEditText(hwndHostname, hostname);
+  setEditText(hwndPort,
+              this->configResult.getPortNum() == 0
+                  ? std::string("8443")
+                  : this->configResult.getPortStr());
   setEditText(hwndUser, this->configResult.getUser());
   setEditText(hwndPassword, this->configResult.getPassword());
 
   WriteLog(LL_TRACE, "  Pre-poplating Comboboxes");
   setCombobox(hwndLogLevel, this->configResult.getLogLevelStr());
-  setCombobox(hwndAuthMethod, this->configResult.getAuthMethodStr());
 
   WriteLog(LL_TRACE, "  Creating Buttons");
   HWND hwndTest =
