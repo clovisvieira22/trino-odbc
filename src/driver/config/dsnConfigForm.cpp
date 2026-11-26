@@ -1,5 +1,7 @@
 #include "dsnConfigForm.hpp"
 
+#include "../../trinoAPIWrapper/connectionConfig.hpp"
+#include "../../trinoAPIWrapper/trinoQuery.hpp"
 #include "../../util/stringFromChar.hpp"
 #include "../../util/writeLog.hpp"
 #include "win32controls/buttonMaker.hpp"
@@ -25,7 +27,13 @@ constexpr int ID_STATIC_OIDC_DISC     = 112;
 constexpr int ID_STATIC_CLIENT_ID     = 113;
 constexpr int ID_STATIC_CLIENT_SECRET = 114;
 constexpr int ID_STATIC_OIDC_SCOPE    = 115;
+constexpr int ID_EDIT_USER            = 116;
+constexpr int ID_EDIT_PASSWORD        = 117;
+constexpr int ID_BUTTON_TEST          = 118;
 constexpr int BUF_LEN                 = 1024;
+
+// Vertical position of the button row.
+constexpr int BUTTON_ROW_Y = 350;
 
 
 std::string NOT_REQUIRED = "<Not Required>";
@@ -60,6 +68,100 @@ DSNForm::DSNForm(HWND parent, std::map<std::string, std::string> attributes) {
   if (attributes.count("oidcScope") > 0) {
     this->configResult.setOidcScope(attributes.at("oidcScope"));
   }
+  if (attributes.count("uid") > 0) {
+    this->configResult.setUser(attributes.at("uid"));
+  }
+}
+
+// Read a text field, treating the "<Not Required>" placeholder as empty.
+static std::string readField(HWND item) {
+  std::string text = getEditText(item);
+  return text == NOT_REQUIRED ? "" : text;
+}
+
+// Copy every value currently shown in the form into a DriverConfig.
+static void readFormIntoConfig(HWND hwnd, DriverConfig* config) {
+  char buf[BUF_LEN] = {0};
+
+  config->setDSN(getEditText(GetDlgItem(hwnd, ID_EDIT_DSN)));
+  config->setHostname(getEditText(GetDlgItem(hwnd, ID_EDIT_HOSTNAME)));
+  config->setPort(getEditText(GetDlgItem(hwnd, ID_EDIT_PORT)));
+
+  HWND logLevelItem = GetDlgItem(hwnd, ID_COMBO_LOGLEVEL);
+  LRESULT logIndex  = SendMessage(logLevelItem, CB_GETCURSEL, 0, 0);
+  SendMessage(logLevelItem, CB_GETLBTEXT, logIndex, (LPARAM)buf);
+  config->setLogLevel(std::string(buf));
+
+  HWND authMethodItem = GetDlgItem(hwnd, ID_COMBO_AUTHMETHOD);
+  LRESULT authIndex   = SendMessage(authMethodItem, CB_GETCURSEL, 0, 0);
+  SendMessage(authMethodItem, CB_GETLBTEXT, authIndex, (LPARAM)buf);
+  config->setAuthMethod(std::string(buf));
+
+  config->setOidcDiscoveryUrl(readField(GetDlgItem(hwnd, ID_EDIT_OIDC_DISC)));
+  config->setClientId(readField(GetDlgItem(hwnd, ID_EDIT_CLIENT_ID)));
+  config->setClientSecret(readField(GetDlgItem(hwnd, ID_EDIT_CLIENT_SECRET)));
+  config->setOidcScope(readField(GetDlgItem(hwnd, ID_EDIT_OIDC_SCOPE)));
+  config->setUser(getEditText(GetDlgItem(hwnd, ID_EDIT_USER)));
+  config->setPassword(getEditText(GetDlgItem(hwnd, ID_EDIT_PASSWORD)));
+}
+
+// Run "SELECT current_user" with the values in the form and report the
+// outcome in a message box. Nothing is written to the server.
+static void testConnection(HWND hwnd) {
+  DriverConfig config;
+  HCURSOR oldCursor = SetCursor(LoadCursor(NULL, IDC_WAIT));
+  std::string message;
+  UINT icon = MB_ICONERROR;
+
+  try {
+    readFormIntoConfig(hwnd, &config);
+    if (config.getHostname().empty()) {
+      throw std::invalid_argument("Hostname is empty.");
+    }
+    ConnectionConfig connectionConfig(config.getHostname(),
+                                      config.getPortNum(),
+                                      config.getAuthMethodEnum(),
+                                      config.getDSN(),
+                                      config.getOidcDiscoveryUrl(),
+                                      config.getClientId(),
+                                      config.getClientSecret(),
+                                      config.getOidcScope(),
+                                      config.getGrantType(),
+                                      config.getTokenEndpoint(),
+                                      config.getUser(),
+                                      config.getPassword());
+    std::string currentUser;
+    {
+      TrinoQuery query(&connectionConfig);
+      query.setQuery("SELECT current_user");
+      query.post();
+      query.poll(ToCompletion);
+      if (query.hasError()) {
+        throw std::runtime_error(query.getError().message);
+      }
+      if (query.getCurrentRowCount() > 0) {
+        const json& row = query.getRowAtIndex(0);
+        if (row.is_array() && !row.empty() && row[0].is_string()) {
+          currentUser = row[0].get<std::string>();
+        }
+      }
+    }
+    std::string version = connectionConfig.getTrinoServerVersion();
+    connectionConfig.disconnect();
+
+    message = "Connection succeeded.\n\nServer: " + config.getHostname() +
+              ":" + config.getPortStr() + "\nTrino version: " +
+              (version.empty() ? "(unknown)" : version) +
+              "\nConnected as: " +
+              (currentUser.empty() ? "(unknown)" : currentUser);
+    icon = MB_ICONINFORMATION;
+  } catch (std::exception& e) {
+    message = std::string("Connection failed.\n\n") + e.what();
+  }
+
+  SetCursor(oldCursor);
+  WriteLog(LL_INFO, "  Test connection result: " + message);
+  MessageBox(hwnd, message.c_str(), "Trino ODBC - Test Connection", MB_OK | icon);
 }
 
 
@@ -98,48 +200,16 @@ LRESULT CALLBACK WINDOW_CB(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
       switch (LOWORD(wParam)) {
         case ID_BUTTON_SAVE: {
           WriteLog(LL_TRACE, "  ID_BUTTON_SAVE executing");
-
-          // Handle the DSN text
-          GetWindowText(dsnItem, buf, BUF_LEN);
-          driverConfigPtr->setDSN(std::string(buf));
-
-          // Handle the hostname
-          GetWindowText(hostnameItem, buf, BUF_LEN);
-          driverConfigPtr->setHostname(std::string(buf));
-
-          // Handle the port
-          GetWindowText(portItem, buf, BUF_LEN);
-          driverConfigPtr->setPort(std::string(buf));
-
-          // Handle the log level
-          LRESULT logIndex = SendMessage(logLevelItem, CB_GETCURSEL, 0, 0);
-          SendMessage(logLevelItem, CB_GETLBTEXT, logIndex, (LPARAM)buf);
-          driverConfigPtr->setLogLevel(std::string(buf));
-
-          // Handle the auth method
-          LRESULT authIndex = SendMessage(authMethodItem, CB_GETCURSEL, 0, 0);
-          SendMessage(authMethodItem, CB_GETLBTEXT, authIndex, (LPARAM)buf);
-          driverConfigPtr->setAuthMethod(std::string(buf));
-
-          // Handle the OIDC Discovery URL
-          GetWindowText(oidcDiscoveryUrlItem, buf, BUF_LEN);
-          driverConfigPtr->setOidcDiscoveryUrl(std::string(buf));
-
-          // Handle the Client ID
-          GetWindowText(clientIdItem, buf, BUF_LEN);
-          driverConfigPtr->setClientId(std::string(buf));
-
-          // Handle the Client Secret
-          GetWindowText(clientSecretItem, buf, BUF_LEN);
-          driverConfigPtr->setClientSecret(std::string(buf));
-
-          // Handle the OIDC Scope
-          GetWindowText(oidcScopeItem, buf, BUF_LEN);
-          driverConfigPtr->setOidcScope(std::string(buf));
+          readFormIntoConfig(hwnd, driverConfigPtr);
 
           driverConfigPtr->setIsSaved(true);
 
           DestroyWindow(hwnd);
+          break;
+        }
+        case ID_BUTTON_TEST: {
+          WriteLog(LL_TRACE, "  ID_BUTTON_TEST executing");
+          testConnection(hwnd);
           break;
         }
         case ID_BUTTON_CANCEL: {
@@ -235,7 +305,7 @@ void DSNForm::ShowDSNForm() {
                              CW_USEDEFAULT,
                              CW_USEDEFAULT,
                              625,
-                             400,
+                             440,
                              this->parent,
                              NULL,
                              GetModuleHandle(NULL),
@@ -255,6 +325,8 @@ void DSNForm::ShowDSNForm() {
   labelMaker(form, 190, ID_STATIC_CLIENT_ID, "Client ID:", oidcVis);
   labelMaker(form, 220, ID_STATIC_CLIENT_SECRET, "Client Secret:", oidcVis);
   labelMaker(form, 250, ID_STATIC_OIDC_SCOPE, "OIDC Scope:", oidcVis);
+  labelMaker(form, 280, NULL, "User (UID):", visible);
+  labelMaker(form, 310, NULL, "Password:", visible);
 
   WriteLog(LL_TRACE, "  Creating Text Entries");
   HWND hwndDsn              = editMaker(form, 10, ID_EDIT_DSN, visible);
@@ -264,6 +336,22 @@ void DSNForm::ShowDSNForm() {
   HWND hwndClientId         = editMaker(form, 190, ID_EDIT_CLIENT_ID, oidcVis);
   HWND hwndClientSecret = editMaker(form, 220, ID_EDIT_CLIENT_SECRET, oidcVis);
   HWND hwndOidcScope    = editMaker(form, 250, ID_EDIT_OIDC_SCOPE, oidcVis);
+  HWND hwndUser         = editMaker(form, 280, ID_EDIT_USER, visible);
+  // The password box cannot use editMaker: ES_PASSWORD does not work together
+  // with ES_MULTILINE.
+  HWND hwndPassword = CreateWindow(
+      "EDIT",
+      "",
+      WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP | ES_PASSWORD |
+          ES_AUTOHSCROLL,
+      165,
+      310,
+      425,
+      20,
+      form,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(ID_EDIT_PASSWORD)),
+      GetModuleHandle(NULL),
+      NULL);
 
   // Sometimes the DSN should be read-only such as when an existing DSN is being
   // configured. In those cases, we need to set the EDIT control to readonly as
@@ -288,14 +376,19 @@ void DSNForm::ShowDSNForm() {
   setEditText(hwndClientId, this->configResult.getClientId());
   setEditText(hwndClientSecret, this->configResult.getClientSecret());
   setEditText(hwndOidcScope, this->configResult.getOidcScope());
+  setEditText(hwndUser, this->configResult.getUser());
+  setEditText(hwndPassword, this->configResult.getPassword());
 
   WriteLog(LL_TRACE, "  Pre-poplating Comboboxes");
   setCombobox(hwndLogLevel, this->configResult.getLogLevelStr());
   setCombobox(hwndAuthMethod, this->configResult.getAuthMethodStr());
 
   WriteLog(LL_TRACE, "  Creating Buttons");
-  HWND hwndSave   = buttonMaker(form, 160, ID_BUTTON_SAVE, "Save");
-  HWND hwndCancel = buttonMaker(form, 260, ID_BUTTON_CANCEL, "Cancel");
+  HWND hwndTest =
+      buttonMaker(form, 165, ID_BUTTON_TEST, "Test Connection", BUTTON_ROW_Y, 130);
+  HWND hwndSave   = buttonMaker(form, 310, ID_BUTTON_SAVE, "Save", BUTTON_ROW_Y);
+  HWND hwndCancel =
+      buttonMaker(form, 405, ID_BUTTON_CANCEL, "Cancel", BUTTON_ROW_Y);
 
   MSG msg = {};
   WriteLog(LL_TRACE, "  Polling...");

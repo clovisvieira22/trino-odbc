@@ -87,6 +87,10 @@ Driver={TrinoODBC};hostname=https://trino.example.com;port=8443;authmethod=Basic
 The hostname must start with `https://`: Trino refuses passwords over plain HTTP.
 `UID` alone also works with "No Auth", replacing the default `TestUser` user name.
 
+The DSN configuration window also has User and Password fields (the password is
+stored encrypted, like the client secret) and a **Test Connection** button that
+runs `SELECT current_user` with the values in the form and shows the result.
+
 ### Identifying Specific Limitations
 
 The best way to find what if anything is missing is to give it a try!

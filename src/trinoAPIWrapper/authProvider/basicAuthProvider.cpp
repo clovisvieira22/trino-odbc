@@ -6,7 +6,7 @@
 
 #include "../../util/writeLog.hpp"
 
-std::string toBase64(const std::string& input) {
+std::string basicAuthBase64(const std::string& input) {
   static const char* alphabet =
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   std::string out;
@@ -63,7 +63,7 @@ class BasicAuthConfig : public AuthConfig {
       }
       this->headers.insert({"X-Trino-User", user});
       this->headers.insert(
-          {"Authorization", "Basic " + toBase64(user + ":" + password)});
+          {"Authorization", "Basic " + basicAuthBase64(user + ":" + password)});
       WriteLog(LL_DEBUG, "  Basic Auth configured for user " + user);
     }
 

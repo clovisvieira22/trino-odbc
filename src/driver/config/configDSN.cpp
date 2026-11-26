@@ -33,7 +33,10 @@ void writeToProfile(DriverConfig result,
                     std::string section,
                     std::string value) {
   std::string dsn = result.getDSN();
-  if (section == "clientSecret") {
+  if (section == "clientSecret" or section == "password") {
+    std::string encryptedKey = section == "clientSecret"
+                                   ? "encryptedClientSecret"
+                                   : "encryptedPassword";
     std::function<std::string(const std::string&)> encryptionFunc = nullptr;
     std::string encryptionLevel;
     if (isSystemDSN()) {
@@ -44,7 +47,7 @@ void writeToProfile(DriverConfig result,
       encryptionLevel = "user";
     }
     SQLWritePrivateProfileString(dsn.c_str(),
-                                 "encryptedClientSecret",
+                                 encryptedKey.c_str(),
                                  encryptionFunc(value).c_str(),
                                  "ODBC.INI");
     SQLWritePrivateProfileString(dsn.c_str(),
@@ -114,6 +117,10 @@ BOOL APIENTRY ConfigDSN(HWND hwndParent,
     for (auto it = kvps.begin(); it != kvps.end(); it++) {
       writeToProfile(result, it->first, it->second);
     }
+    // The password is not part of the KVPs (they get logged), so it is
+    // written separately, encrypted the same way as the client secret.
+    // An empty password clears any previously stored one.
+    writeToProfile(result, "password", result.getPassword());
     return true;
   } else {
     return false;

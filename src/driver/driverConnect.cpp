@@ -47,6 +47,9 @@ SQLRETURN SQL_API SQLDriverConnect(SQLHDBC ConnectionHandle,
   WriteLog(LL_TRACE, "  Parsing input connection string");
   std::map<std::string, std::string> kvps =
       parseKVPsFromSemicolonDelimStr(inputConnStr);
+  // Password stored (encrypted) in the DSN, used when the connection string
+  // does not carry one. Kept out of the KVPs so it never reaches the log.
+  std::string dsnPassword;
 
   // Do not log the raw connection string: it may contain a password.
   WriteLog(LL_TRACE, "  Input connection string KVPs were:");
@@ -58,6 +61,7 @@ SQLRETURN SQL_API SQLDriverConnect(SQLHDBC ConnectionHandle,
     // config we can from that DSN's profile
     std::string dsn            = kvps.at("dsn");
     DriverConfig defaultConfig = readDriverConfigFromProfile(dsn);
+    dsnPassword                = defaultConfig.getPassword();
     std::map<std::string, std::string> defaultKvps =
         driverConfigToKVPs(defaultConfig);
 
@@ -78,6 +82,9 @@ SQLRETURN SQL_API SQLDriverConnect(SQLHDBC ConnectionHandle,
 
   WriteLog(LL_TRACE, "  Constructing driver config");
   DriverConfig config = driverConfigFromKVPs(kvps);
+  if (config.getPassword().empty() and !dsnPassword.empty()) {
+    config.setPassword(dsnPassword);
+  }
 
   // It's kind of unfortunate that we can't set the log level of the driver
   // until we've read the DSN in some way.

@@ -15,4 +15,4 @@ std::unique_ptr<AuthConfig> getBasicAuthConfigPtr(std::string hostname,
                                                   std::string password);
 
 // Standard (RFC 4648) base64 encoding with padding. Exposed for testing.
-std::string toBase64(const std::string& input);
+std::string basicAuthBase64(const std::string& input);

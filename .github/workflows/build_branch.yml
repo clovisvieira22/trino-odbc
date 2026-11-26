@@ -2,17 +2,17 @@ name: Build installers (branches)
 
 # Builds the MSI installers for any branch other than main, so a change can be
 # installed and tested on Windows without cutting a release. The installers are
-# available as the "installers" artifact of the workflow run.
+# available as the "installers" artifact of the workflow run, and the
+# feat/basic-auth branch also publishes them as the "basic-auth-test"
+# pre-release so they can be downloaded with a plain link.
 on:
   push:
     branches-ignore:
       - main
-    paths-ignore:
-      - .github/workflows/publish_test_release.yml
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -78,3 +78,32 @@ jobs:
             install/TrinoODBC_x64.msi
             install/LICENSE.rtf
             install/third_party_licenses.txt
+
+  publish-test-release:
+    if: github.ref == 'refs/heads/feat/basic-auth'
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: installers
+          path: ./installers
+
+      - name: Remove the previous test pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete basic-auth-test --cleanup-tag -y -R "$GITHUB_REPOSITORY" || true
+
+      - name: Create test pre-release
+        uses: softprops/action-gh-release@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: basic-auth-test
+          target_commitish: ${{ github.sha }}
+          name: Basic Auth test build
+          prerelease: true
+          body: Test build of the feat/basic-auth branch (Basic Auth with UID/PWD, Test Connection button). Not an official release.
+          files: |
+            installers/TrinoODBC_x64.msi
+            installers/TrinoODBC_x86.msi

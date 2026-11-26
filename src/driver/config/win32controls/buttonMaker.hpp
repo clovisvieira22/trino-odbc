@@ -6,4 +6,6 @@
 HWND buttonMaker(HWND form,
                  int horizOffset,
                  int buttonId,
-                 std::string buttonText);
+                 std::string buttonText,
+                 int vertOffset = 300,
+                 int width      = 80);

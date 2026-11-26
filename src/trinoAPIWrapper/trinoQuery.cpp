@@ -305,8 +305,19 @@ void TrinoQuery::post() {
     WriteLog(LL_ERROR,
              "  Error POSTing query. CURL status code was " +
                  std::to_string(httpStatusCode));
+    if (res != CURLE_OK) {
+      // Network or TLS problem: the server never answered.
+      throw std::runtime_error(std::string("Could not reach Trino at ") +
+                               statementURL + ": " + curl_easy_strerror(res));
+    }
+    if (httpStatusCode == 401) {
+      throw std::runtime_error(
+          "Trino rejected the credentials (HTTP 401). Check the auth "
+          "method, user and password.");
+    }
     throw std::runtime_error("Unexpected Trino POST status: " +
-                             std::to_string(httpStatusCode));
+                             std::to_string(httpStatusCode) + " " +
+                             this->connectionConfig->responseData.substr(0, 300));
   }
 }
 
